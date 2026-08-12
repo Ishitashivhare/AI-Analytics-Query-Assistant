@@ -12,7 +12,7 @@ from typing import AsyncGenerator
 
 import httpx
 
-from db import DB_SCHEMA
+from db import DatabaseSchema
 
 logger = logging.getLogger("ai_analytics.llm")
 
@@ -21,22 +21,36 @@ OLLAMA_MODEL = "llama3"
 REQUEST_TIMEOUT = 60.0
 
 
-def build_sql_prompt(question: str) -> str:
+def _dialect_display_name(database_type: str) -> str:
+    normalized = database_type.strip().lower()
+    if normalized == "mysql":
+        return "MySQL"
+    return "SQLite"
+
+
+def build_sql_prompt(question: str, schema: DatabaseSchema, database_type: str) -> str:
     """
     Builds a strict, rule-enforcing prompt that instructs the model to
     convert a natural-language question into a single safe SQL SELECT
-    statement against the known schema.
+    statement against the discovered schema.
     """
-    prompt = f"""You are a senior data analyst who writes precise SQLite SQL queries.
+    sql_dialect = _dialect_display_name(schema.sql_dialect or database_type)
+    prompt = f"""You are a senior data analyst who writes precise {sql_dialect} SQL queries.
+
+SQL DIALECT:
+{sql_dialect}
+
+DATA SOURCE TYPE:
+{schema.source_type}
 
 DATABASE SCHEMA:
-{DB_SCHEMA}
+{schema.to_prompt_text()}
 
 STRICT RULES (follow all of them):
-1. ONLY generate a single SELECT statement. Never use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, or any other data-modifying statement.
-2. Use ONLY the table and columns listed in the schema above. Do not invent columns or tables.
+1. ONLY generate a single SELECT statement. Never use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, or any other data-modifying statement.
+2. Use ONLY the tables and columns listed in the schema above. Do not invent columns or tables.
 3. Return ONLY the raw SQL query. No explanations, no markdown formatting, no code fences, no comments — just the SQL statement itself.
-4. The query must be valid SQLite syntax.
+4. The query must be valid {sql_dialect} syntax.
 5. If the question cannot be answered with the given schema, return exactly: SELECT 'UNSUPPORTED_QUESTION' AS error;
 
 USER QUESTION:
@@ -46,13 +60,13 @@ SQL QUERY:"""
     return prompt
 
 
-async def generate_sql(question: str) -> str:
+async def generate_sql(question: str, schema: DatabaseSchema, database_type: str) -> str:
     """
     Calls the Ollama /api/generate endpoint (non-streaming) and returns
     the raw SQL text produced by the model.
     Raises httpx.HTTPError / httpx.RequestError on connectivity failure.
     """
-    prompt = build_sql_prompt(question)
+    prompt = build_sql_prompt(question, schema, database_type)
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
@@ -60,7 +74,12 @@ async def generate_sql(question: str) -> str:
         "options": {"temperature": 0.0},
     }
 
-    logger.info("Requesting SQL generation from Ollama for question: %s", question)
+    logger.info(
+        "Requesting SQL generation from Ollama for question: %s | source_type=%s | dialect=%s",
+        question,
+        schema.source_type,
+        schema.sql_dialect,
+    )
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         response = await client.post(OLLAMA_URL, json=payload)

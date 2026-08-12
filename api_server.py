@@ -4,29 +4,51 @@ api_server.py
 FastAPI application exposing the AI Analytics Query Assistant.
 
 Endpoints:
-  GET  /health  -> service + Ollama connectivity check
-  POST /ask     -> natural language question -> SQL -> execute -> results
-  POST /stream  -> streams a natural-language LLM answer token by token
+  GET  /health                         -> service + Ollama connectivity check
+  POST /data-sources/sqlite/upload     -> upload a SQLite database file
+  POST /data-sources/csv/upload        -> upload a CSV and load it into temp SQLite
+  POST /data-sources/mysql/connect     -> connect to MySQL and inspect schema
+  POST /ask                            -> natural language question -> SQL -> execute -> results
+  POST /stream                         -> streams a natural-language LLM answer token by token
 
 Run with:
     uvicorn api_server:app --reload --port 8000
 """
 
+from __future__ import annotations
+
 import logging
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from db import QueryExecutionError, UnsafeQueryError, run_query
-from llama_sql_generator import (
-    OLLAMA_MODEL,
-    check_ollama_health,
-    generate_sql,
-    stream_llm_response,
+from db import (
+    DB_PATH,
+    CSVAdapter,
+    DatabaseAdapter,
+    DatabaseSchema,
+    MySQLAdapter,
+    QueryExecutionError,
+    SQLiteAdapter,
+    UnsafeQueryError,
+    get_database_adapter,
 )
-from models import AskRequest, AskResponse, HealthResponse, StreamRequest
+from file_utils import ALLOWED_CSV_EXTENSIONS, ALLOWED_SQLITE_EXTENSIONS, delete_path, store_upload_bytes
+from llama_sql_generator import OLLAMA_MODEL, check_ollama_health, generate_sql, stream_llm_response
+from models import (
+    AskRequest,
+    AskResponse,
+    DataSourceResponse,
+    DatabaseSchemaResponse,
+    HealthResponse,
+    MySQLConnectRequest,
+    StreamRequest,
+)
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -37,13 +59,109 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ai_analytics.api")
 
+
+@dataclass
+class RegisteredSource:
+    source_id: str
+    source_type: str
+    adapter: DatabaseAdapter
+    schema: DatabaseSchema
+    display_name: str
+
+
+REGISTERED_SOURCES: dict[str, RegisteredSource] = {}
+
+
+def _schema_to_response(schema: DatabaseSchema) -> DatabaseSchemaResponse:
+    return DatabaseSchemaResponse.model_validate(schema.to_dict())
+
+
+def _register_source(source_type: str, adapter: DatabaseAdapter, schema: DatabaseSchema, display_name: str) -> RegisteredSource:
+    source_id = uuid.uuid4().hex
+    registered = RegisteredSource(
+        source_id=source_id,
+        source_type=source_type,
+        adapter=adapter,
+        schema=schema,
+        display_name=display_name,
+    )
+    REGISTERED_SOURCES[source_id] = registered
+    return registered
+
+
+def _get_registered_source(source_id: str | None) -> RegisteredSource | None:
+    if not source_id:
+        return None
+    return REGISTERED_SOURCES.get(source_id)
+
+
+def _close_registered_source(source_id: str) -> None:
+    registered = REGISTERED_SOURCES.pop(source_id, None)
+    if not registered:
+        return
+    try:
+        registered.adapter.close()
+    except Exception:
+        logger.warning("Failed to close data source %s", source_id, exc_info=True)
+
+
+def _close_all_registered_sources() -> None:
+    for source_id in list(REGISTERED_SOURCES):
+        _close_registered_source(source_id)
+
+
+def _mysql_error_message(exc: Exception) -> str:
+    message = str(exc)
+    lowered = message.lower()
+    errno = getattr(exc, "errno", None)
+
+    if errno in {1045} or "access denied" in lowered or "using password" in lowered:
+        return "MySQL connection failed: invalid username or password."
+    if errno in {1049} or "unknown database" in lowered:
+        return "MySQL connection failed: the requested database does not exist."
+    if errno in {2003, 2005} or "can't connect to mysql server" in lowered or "host" in lowered and "unknown" in lowered:
+        return "MySQL connection failed: could not reach the host or port."
+    if errno in {2006, 2013} or "lost connection" in lowered:
+        return "MySQL connection failed: the server closed the connection unexpectedly."
+    return f"MySQL connection failed: {message}"
+
+
+def _build_data_source_response(registered: RegisteredSource, message: str) -> DataSourceResponse:
+    return DataSourceResponse(
+        source_id=registered.source_id,
+        source_type=registered.source_type,  # type: ignore[arg-type]
+        message=message,
+        database_schema=_schema_to_response(registered.schema),
+    )
+
+
+def _default_sqlite_source() -> RegisteredSource:
+    adapter = SQLiteAdapter(DB_PATH, source_name=DB_PATH.name)
+    schema = adapter.get_schema()
+    return RegisteredSource(
+        source_id="legacy-analytics-db",
+        source_type="sqlite",
+        adapter=adapter,
+        schema=schema,
+        display_name=DB_PATH.name,
+    )
+
+
+async def _save_uploaded_file(upload_file: UploadFile, allowed_extensions: set[str], prefix: str) -> Path:
+    if not upload_file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded file must have a filename.")
+    data = await upload_file.read()
+    try:
+        return store_upload_bytes(upload_file.filename, data, allowed_extensions, prefix=prefix)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 # ---------------------------------------------------------------------------
 # FastAPI app setup
 # ---------------------------------------------------------------------------
 app = FastAPI(
     title="AI Analytics Query Assistant",
-    description="Converts natural language questions into SQL, executes them "
-                 "against a SQLite sales database, and returns structured results.",
+    description="Converts natural language questions into SQL, executes them against the selected data source, and returns structured results.",
     version="1.0.0",
 )
 
@@ -54,6 +172,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("shutdown")
+def shutdown_cleanup() -> None:
+    _close_all_registered_sources()
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
@@ -67,21 +190,90 @@ async def health_check() -> HealthResponse:
     )
 
 
+@app.post("/data-sources/sqlite/upload", response_model=DataSourceResponse, tags=["Data Source"])
+async def upload_sqlite_database(file: UploadFile = File(...)) -> DataSourceResponse:
+    """Upload a SQLite database file and introspect its schema."""
+    upload_path = await _save_uploaded_file(file, ALLOWED_SQLITE_EXTENSIONS, prefix="sqlite_upload")
+    adapter: SQLiteAdapter | None = None
+
+    try:
+        adapter = SQLiteAdapter(upload_path, managed=True, source_name=file.filename)
+        schema = adapter.get_schema()
+        registered = _register_source("sqlite", adapter, schema, file.filename or upload_path.name)
+        return _build_data_source_response(registered, "Connected successfully to the uploaded SQLite database.")
+    except QueryExecutionError as exc:
+        if adapter is not None:
+            adapter.close()
+        else:
+            delete_path(upload_path)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        delete_path(upload_path)
+        raise HTTPException(status_code=400, detail=f"Could not load the uploaded SQLite database: {exc}") from exc
+
+
+@app.post("/data-sources/csv/upload", response_model=DataSourceResponse, tags=["Data Source"])
+async def upload_csv_file(file: UploadFile = File(...)) -> DataSourceResponse:
+    """Upload a CSV file and load it into a temporary SQLite database."""
+    upload_path = await _save_uploaded_file(file, ALLOWED_CSV_EXTENSIONS, prefix="csv_upload")
+
+    try:
+        adapter = CSVAdapter(upload_path, source_name=file.filename)
+        schema = adapter.get_schema()
+        registered = _register_source("csv", adapter, schema, file.filename or upload_path.name)
+        return _build_data_source_response(registered, "Connected successfully to the uploaded CSV file.")
+    except QueryExecutionError as exc:
+        delete_path(upload_path)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        delete_path(upload_path)
+        raise HTTPException(status_code=400, detail=f"Could not load the uploaded CSV file: {exc}") from exc
+
+
+@app.post("/data-sources/mysql/connect", response_model=DataSourceResponse, tags=["Data Source"])
+async def connect_mysql_database(request: MySQLConnectRequest) -> DataSourceResponse:
+    """Connect to a MySQL database and introspect its schema."""
+    try:
+        adapter = MySQLAdapter(
+            host=request.host,
+            port=request.port,
+            database=request.database,
+            username=request.username,
+            password=request.password,
+            source_name=request.database,
+        )
+        schema = adapter.get_schema()
+        registered = _register_source("mysql", adapter, schema, request.database)
+        return _build_data_source_response(registered, "Connected successfully to MySQL.")
+    except QueryExecutionError as exc:
+        raise HTTPException(status_code=400, detail=_mysql_error_message(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=_mysql_error_message(exc)) from exc
+
+
 @app.post("/ask", response_model=AskResponse, tags=["Query"])
 async def ask_question(request: AskRequest) -> AskResponse:
     """
     Full pipeline:
-      1. Send the question + schema to the LLM to generate SQL.
+      1. Select the correct source and get its dynamic schema.
+      2. Send the question + schema + dialect to the LLM to generate SQL.
       2. Validate the SQL is a safe, read-only SELECT statement.
-      3. Execute it against the SQLite database.
+      3. Execute it against the selected database.
       4. Return the question, generated SQL, and results as JSON.
     """
     question = request.question.strip()
-    logger.info("Received /ask request: %s", question)
+    logger.info("Received /ask request: %s | source_id=%s", question, request.source_id or "legacy")
+
+    registered = _get_registered_source(request.source_id)
+    if request.source_id and not registered:
+        raise HTTPException(status_code=404, detail="The selected data source is no longer available. Please reconnect.")
+
+    if registered is None:
+        registered = _default_sqlite_source()
 
     # Step 1: Generate SQL via the LLM
     try:
-        sql = await generate_sql(question)
+        sql = await generate_sql(question, registered.schema, registered.source_type)
     except httpx.RequestError as exc:
         logger.error("LLM request failed: %s", exc)
         raise HTTPException(
@@ -98,18 +290,32 @@ async def ask_question(request: AskRequest) -> AskResponse:
     if not sql:
         return AskResponse(
             question=question,
+            source_id=registered.source_id if registered.source_id != "legacy-analytics-db" else None,
+            source_type=registered.source_type,  # type: ignore[arg-type]
             sql=None,
             result=None,
             error="The LLM did not return any SQL for this question.",
         )
 
+    if "UNSUPPORTED_QUESTION" in sql.upper():
+        return AskResponse(
+            question=question,
+            source_id=registered.source_id if registered.source_id != "legacy-analytics-db" else None,
+            source_type=registered.source_type,  # type: ignore[arg-type]
+            sql=sql,
+            result=None,
+            error="This question cannot be answered from the selected data source.",
+        )
+
     # Step 2 + 3: Validate and execute the SQL safely
     try:
-        result, row_count = run_query(sql)
+        result, row_count = registered.adapter.execute_query(sql)
     except UnsafeQueryError as exc:
         logger.warning("Rejected unsafe SQL: %s | reason: %s", sql, exc)
         return AskResponse(
             question=question,
+            source_id=registered.source_id if registered.source_id != "legacy-analytics-db" else None,
+            source_type=registered.source_type,  # type: ignore[arg-type]
             sql=sql,
             result=None,
             error=f"Query rejected for safety reasons: {exc}",
@@ -118,6 +324,8 @@ async def ask_question(request: AskRequest) -> AskResponse:
         logger.error("SQL execution failed: %s | reason: %s", sql, exc)
         return AskResponse(
             question=question,
+            source_id=registered.source_id if registered.source_id != "legacy-analytics-db" else None,
+            source_type=registered.source_type,  # type: ignore[arg-type]
             sql=sql,
             result=None,
             error=f"Query execution failed: {exc}",
@@ -129,6 +337,8 @@ async def ask_question(request: AskRequest) -> AskResponse:
     # Step 4: Return structured response
     return AskResponse(
         question=question,
+        source_id=registered.source_id if registered.source_id != "legacy-analytics-db" else None,
+        source_type=registered.source_type,  # type: ignore[arg-type]
         sql=sql,
         result=result,
         row_count=row_count,

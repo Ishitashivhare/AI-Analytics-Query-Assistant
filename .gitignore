@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 analytics.db
 .env
+temporary/

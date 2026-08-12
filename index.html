@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Analytics Assistant</title>
+    <style>
+        :root {
+            --bg: #09111f;
+            --bg-soft: rgba(14, 23, 42, 0.82);
+            --panel: rgba(15, 23, 42, 0.78);
+            --panel-border: rgba(148, 163, 184, 0.18);
+            --text: #e5eef9;
+            --muted: #91a4bf;
+            --accent: #68d391;
+            --accent-strong: #38bdf8;
+            --warning: #f59e0b;
+            --danger: #fb7185;
+            --shadow: 0 20px 70px rgba(0, 0, 0, 0.35);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--text);
+            font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.22), transparent 32%),
+                radial-gradient(circle at bottom right, rgba(104, 211, 145, 0.18), transparent 36%),
+                linear-gradient(160deg, #050816 0%, #0b1630 48%, #09111f 100%);
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+            background-size: 56px 56px;
+            mask-image: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent 95%);
+            opacity: 0.4;
+        }
+
+        .shell {
+            width: min(1200px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 32px 0 40px;
+        }
+
+        .hero {
+            display: grid;
+            gap: 14px;
+            padding: 28px 28px 24px;
+            border: 1px solid var(--panel-border);
+            border-radius: 24px;
+            background: linear-gradient(180deg, rgba(10, 18, 34, 0.94), rgba(8, 14, 28, 0.86));
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(14px);
+            margin-bottom: 24px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::after {
+            content: "";
+            position: absolute;
+            inset: auto -10% -40% auto;
+            width: 320px;
+            height: 320px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(56, 189, 248, 0.18), transparent 66%);
+            filter: blur(8px);
+            pointer-events: none;
+        }
+
+        .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            width: fit-content;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(104, 211, 145, 0.3);
+            color: #bff2d1;
+            background: rgba(17, 33, 23, 0.65);
+            font-size: 0.88rem;
+            letter-spacing: 0.02em;
+        }
+
+        h1 {
+            margin: 0;
+            font-family: "Georgia", "Times New Roman", serif;
+            font-size: clamp(2.2rem, 4vw, 3.8rem);
+            line-height: 1.05;
+            letter-spacing: -0.03em;
+        }
+
+        .subtitle {
+            max-width: 760px;
+            color: var(--muted);
+            margin: 0;
+            font-size: 1.02rem;
+            line-height: 1.65;
+        }
+
+        .status-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin-top: 4px;
+        }
+
+        .status-pill {
+            padding: 10px 14px;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            background: rgba(15, 23, 42, 0.72);
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        .status-pill strong {
+            color: var(--text);
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: 1.05fr 0.95fr;
+            gap: 24px;
+        }
+
+        .panel {
+            border: 1px solid var(--panel-border);
+            border-radius: 24px;
+            background: var(--bg-soft);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(14px);
+            padding: 22px;
+        }
+
+        .panel h2 {
+            margin: 0 0 16px;
+            font-size: 1.15rem;
+            letter-spacing: 0.01em;
+        }
+
+        .source-switch {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+
+        .switch-btn {
+            border: 1px solid rgba(148, 163, 184, 0.24);
+            border-radius: 16px;
+            background: rgba(15, 23, 42, 0.68);
+            color: var(--text);
+            padding: 14px 16px;
+            font-size: 0.98rem;
+            cursor: pointer;
+            transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+        }
+
+        .switch-btn:hover {
+            transform: translateY(-1px);
+            border-color: rgba(56, 189, 248, 0.5);
+        }
+
+        .switch-btn.active {
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(104, 211, 145, 0.16));
+            border-color: rgba(104, 211, 145, 0.5);
+            box-shadow: 0 0 0 1px rgba(104, 211, 145, 0.12) inset;
+        }
+
+        .source-form {
+            display: none;
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+
+        .source-form.active {
+            display: grid;
+        }
+
+        .field-grid {
+            display: grid;
+            gap: 12px;
+        }
+
+        .field-grid.two {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        label {
+            display: block;
+            font-size: 0.88rem;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+
+        input,
+        textarea {
+            width: 100%;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            border-radius: 14px;
+            background: rgba(8, 14, 28, 0.9);
+            color: var(--text);
+            padding: 13px 14px;
+            outline: none;
+            transition: border-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        input:focus,
+        textarea:focus {
+            border-color: rgba(56, 189, 248, 0.72);
+            box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.12);
+        }
+
+        input[type="file"] {
+            padding: 12px;
+        }
+
+        .button-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        button.action {
+            border: none;
+            border-radius: 14px;
+            padding: 13px 16px;
+            cursor: pointer;
+            font-weight: 700;
+            color: #06111d;
+            background: linear-gradient(135deg, #9ef0be 0%, #7dd3fc 100%);
+            transition: transform 160ms ease, filter 160ms ease, opacity 160ms ease;
+        }
+
+        button.action:hover {
+            transform: translateY(-1px);
+            filter: brightness(1.02);
+        }
+
+        button.action:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+            transform: none;
+        }
+
+        button.secondary {
+            background: rgba(15, 23, 42, 0.8);
+            color: var(--text);
+            border: 1px solid rgba(148, 163, 184, 0.22);
+        }
+
+        .notice {
+            padding: 14px 16px;
+            border-radius: 16px;
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .notice.success {
+            border-color: rgba(104, 211, 145, 0.34);
+            color: #dff8ea;
+            background: rgba(17, 33, 23, 0.68);
+        }
+
+        .notice.error {
+            border-color: rgba(251, 113, 133, 0.34);
+            color: #ffd9e0;
+            background: rgba(47, 14, 24, 0.7);
+        }
+
+        .schema-list {
+            display: grid;
+            gap: 12px;
+        }
+
+        .table-card {
+            padding: 14px 16px;
+            border-radius: 18px;
+            background: rgba(8, 14, 28, 0.84);
+            border: 1px solid rgba(148, 163, 184, 0.14);
+        }
+
+        .table-name {
+            margin: 0 0 10px;
+            font-weight: 700;
+            font-size: 1rem;
+        }
+
+        .column-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .column-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 10px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            font-size: 0.84rem;
+            color: #d7e5f7;
+        }
+
+        .column-chip small {
+            color: var(--muted);
+        }
+
+        .output-card {
+            margin-top: 18px;
+            padding: 16px;
+            border-radius: 18px;
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            background: rgba(8, 14, 28, 0.82);
+            overflow: hidden;
+        }
+
+        .output-card h3 {
+            margin: 0 0 10px;
+            font-size: 1rem;
+        }
+
+        pre {
+            margin: 0;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #d7e5f7;
+            background: rgba(5, 10, 20, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+            border-radius: 16px;
+            padding: 14px;
+            line-height: 1.6;
+        }
+
+        table.result-table {
+            width: 100%;
+            border-collapse: collapse;
+            overflow: hidden;
+            border-radius: 16px;
+        }
+
+        table.result-table th,
+        table.result-table td {
+            border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+            text-align: left;
+            padding: 10px 12px;
+            vertical-align: top;
+        }
+
+        table.result-table th {
+            color: #cde8ff;
+            font-size: 0.9rem;
+            background: rgba(15, 23, 42, 0.95);
+        }
+
+        table.result-table td {
+            color: #e2edf9;
+            background: rgba(8, 14, 28, 0.82);
+        }
+
+        .empty {
+            color: var(--muted);
+            font-style: italic;
+        }
+
+        .footer-note {
+            margin-top: 14px;
+            color: var(--muted);
+            font-size: 0.92rem;
+            line-height: 1.6;
+        }
+
+        @media (max-width: 980px) {
+            .layout {
+                grid-template-columns: 1fr;
+            }
+
+            .source-switch,
+            .field-grid.two {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <section class="hero">
+            <div class="eyebrow">AI Analytics Query Assistant</div>
+            
+            <p class="subtitle">
+                Select a data source, let the app inspect the schema, and then ask natural-language questions.
+               
+            </p>
+            <div class="status-row">
+                <div class="status-pill"><strong id="backendStatus">Backend:</strong> waiting for a request</div>
+                <div class="status-pill"><strong id="sourceStatus">Data Source:</strong> none selected</div>
+                <div class="status-pill"><strong id="schemaStatus">Schema:</strong> not loaded</div>
+            </div>
+        </section>
+
+        <div class="layout">
+            <section class="panel">
+                <h2>Select Data Source</h2>
+                <div class="source-switch" role="tablist" aria-label="Data source type">
+                    <button class="switch-btn active" id="btn-sqlite" onclick="selectSource('sqlite')">SQLite</button>
+                    <button class="switch-btn" id="btn-mysql" onclick="selectSource('mysql')">MySQL</button>
+                    <button class="switch-btn" id="btn-csv" onclick="selectSource('csv')">CSV</button>
+                </div>
+
+                <div class="source-form active" id="form-sqlite">
+                    <div class="field-grid">
+                        <div>
+                            <label for="sqliteFile">Upload SQLite database (.db, .sqlite, .sqlite3)</label>
+                            <input id="sqliteFile" type="file" accept=".db,.sqlite,.sqlite3" />
+                        </div>
+                    </div>
+                    <div class="button-row">
+                        <button class="action" onclick="connectSqlite()">Upload and inspect</button>
+                    </div>
+                </div>
+
+                <div class="source-form" id="form-mysql">
+                    <div class="field-grid two">
+                        <div>
+                            <label for="mysqlHost">Host</label>
+                            <input id="mysqlHost" type="text" placeholder="127.0.0.1" />
+                        </div>
+                        <div>
+                            <label for="mysqlPort">Port</label>
+                            <input id="mysqlPort" type="number" value="3306" min="1" max="65535" />
+                        </div>
+                        <div>
+                            <label for="mysqlDatabase">Database</label>
+                            <input id="mysqlDatabase" type="text" placeholder="analytics" />
+                        </div>
+                        <div>
+                            <label for="mysqlUsername">Username</label>
+                            <input id="mysqlUsername" type="text" placeholder="root" />
+                        </div>
+                    </div>
+                    <div class="field-grid">
+                        <div>
+                            <label for="mysqlPassword">Password</label>
+                            <input id="mysqlPassword" type="password" placeholder="••••••••" />
+                        </div>
+                    </div>
+                    <div class="button-row">
+                        <button class="action" onclick="connectMysql()">Connect</button>
+                    </div>
+                </div>
+
+                <div class="source-form" id="form-csv">
+                    <div class="field-grid">
+                        <div>
+                            <label for="csvFile">Upload CSV file (.csv)</label>
+                            <input id="csvFile" type="file" accept=".csv" />
+                        </div>
+                    </div>
+                    <div class="button-row">
+                        <button class="action" onclick="connectCsv()">Upload and inspect</button>
+                    </div>
+                </div>
+
+                <div id="connectionMessage" class="notice" style="display:none;"></div>
+
+                <div style="margin-top:18px;">
+                    <h2>Discovered Schema</h2>
+                    <div id="schemaPanel" class="schema-list">
+                        <div class="notice">Please upload/connect a data source first.</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2>Ask a Question</h2>
+                <div id="questionGuard" class="notice">
+                    Please upload/connect a data source first.
+                </div>
+
+                <div style="margin-top:14px;">
+                    <label for="question">Natural-language question</label>
+                    <textarea id="question" rows="5" placeholder="What is the total revenue by product?" disabled></textarea>
+                </div>
+
+                <div class="button-row" style="margin-top:12px;">
+                    <button class="action" id="askButton" onclick="askQuestion()" disabled>Ask</button>
+                    <button class="action secondary" onclick="clearOutput()">Clear output</button>
+                </div>
+
+                <div class="output-card" id="outputCard">
+                    <h3>SQL</h3>
+                    <pre id="sqlOutput" class="empty">No query has been run yet.</pre>
+                </div>
+
+                <div class="output-card">
+                    <h3>Result</h3>
+                    <div id="resultOutput" class="empty">No result yet.</div>
+                </div>
+
+                <div class="output-card">
+                    <h3>Error</h3>
+                    <pre id="errorOutput" class="empty">No errors.</pre>
+                </div>
+
+                
+            </section>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = "http://127.0.0.1:8000";
+        let activeSource = "sqlite";
+        let activeSourceId = null;
+        let activeSchema = null;
+
+        function selectSource(sourceType) {
+            activeSource = sourceType;
+            activeSourceId = null;
+            activeSchema = null;
+            setNotice("Select a source and connect before asking questions.");
+            updateConnectionStatus("none selected", "not loaded", false);
+            document.getElementById("question").value = "";
+            setQuestionEnabled(false);
+
+            for (const type of ["sqlite", "mysql", "csv"]) {
+                document.getElementById(`btn-${type}`).classList.toggle("active", type === sourceType);
+                document.getElementById(`form-${type}`).classList.toggle("active", type === sourceType);
+            }
+
+            clearSchema();
+            clearOutput();
+        }
+
+        function setNotice(message, kind = "") {
+            const box = document.getElementById("connectionMessage");
+            box.style.display = "block";
+            box.className = `notice ${kind}`.trim();
+            box.textContent = message;
+        }
+
+        function updateConnectionStatus(sourceLabel, schemaLabel, connected) {
+            document.getElementById("sourceStatus").innerHTML = `<strong>Data Source:</strong> ${sourceLabel}`;
+            document.getElementById("schemaStatus").innerHTML = `<strong>Schema:</strong> ${schemaLabel}`;
+            const backend = document.getElementById("backendStatus");
+            backend.textContent = connected ? "Backend: ready" : "Backend: waiting for a request";
+        }
+
+        function setQuestionEnabled(enabled) {
+            document.getElementById("question").disabled = !enabled;
+            document.getElementById("askButton").disabled = !enabled;
+            document.getElementById("questionGuard").style.display = enabled ? "none" : "block";
+        }
+
+        function clearSchema() {
+            document.getElementById("schemaPanel").innerHTML = '<div class="notice">Please upload/connect a data source first.</div>';
+        }
+
+        function clearOutput() {
+            document.getElementById("sqlOutput").textContent = "No query has been run yet.";
+            document.getElementById("sqlOutput").classList.add("empty");
+            document.getElementById("resultOutput").innerHTML = '<div class="empty">No result yet.</div>';
+            document.getElementById("errorOutput").textContent = "No errors.";
+            document.getElementById("errorOutput").classList.add("empty");
+        }
+
+        function escapeHtml(value) {
+            return String(value)
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#39;");
+        }
+
+        function renderSchema(schema) {
+            if (!schema || !schema.tables || schema.tables.length === 0) {
+                document.getElementById("schemaPanel").innerHTML = '<div class="notice">No user tables were found in the selected data source.</div>';
+                return;
+            }
+
+            const html = schema.tables.map((table) => {
+                const columns = table.columns.map((column) => {
+                    const tags = [];
+                    if (column.primary_key) tags.push("PK");
+                    if (column.foreign_key) tags.push(`FK → ${escapeHtml(column.foreign_key)}`);
+                    const meta = [escapeHtml(column.data_type), column.nullable ? "nullable" : "not null", ...tags]
+                        .filter(Boolean)
+                        .join(" · ");
+                    return `<span class="column-chip"><strong>${escapeHtml(column.name)}</strong> <small>${meta}</small></span>`;
+                }).join("");
+
+                return `
+                    <article class="table-card">
+                        <div class="table-name">Table: ${escapeHtml(table.name)}</div>
+                        <div class="column-list">${columns || '<span class="empty">No columns found.</span>'}</div>
+                    </article>
+                `;
+            }).join("");
+
+            document.getElementById("schemaPanel").innerHTML = html;
+        }
+
+        function renderResult(result) {
+            const container = document.getElementById("resultOutput");
+            if (!result || result.length === 0) {
+                container.innerHTML = '<div class="empty">The query ran successfully but returned no rows.</div>';
+                return;
+            }
+
+            const columns = Object.keys(result[0]);
+            const header = columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
+            const rows = result.map((row) => {
+                const cells = columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("");
+                return `<tr>${cells}</tr>`;
+            }).join("");
+
+            container.innerHTML = `
+                <table class="result-table">
+                    <thead><tr>${header}</tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+
+        function showSuccess(response, sourceLabel) {
+            activeSourceId = response.source_id;
+            activeSchema = response.database_schema;
+            renderSchema(response.database_schema);
+            setQuestionEnabled(true);
+            document.getElementById("question").focus();
+            updateConnectionStatus(sourceLabel, `${response.database_schema.tables.length} table(s) loaded`, true);
+            setNotice(`${response.message}\nSource ID: ${response.source_id}`, "success");
+        }
+
+        async function connectSqlite() {
+            const fileInput = document.getElementById("sqliteFile");
+            if (!fileInput.files.length) {
+                setNotice("Choose a SQLite file first.", "error");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("file", fileInput.files[0]);
+
+            try {
+                const response = await fetch(`${API_BASE}/data-sources/sqlite/upload`, {
+                    method: "POST",
+                    body: formData,
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || "Unable to connect to the SQLite file.");
+                showSuccess(data, "SQLite");
+            } catch (error) {
+                setQuestionEnabled(false);
+                setNotice(error.message, "error");
+            }
+        }
+
+        async function connectCsv() {
+            const fileInput = document.getElementById("csvFile");
+            if (!fileInput.files.length) {
+                setNotice("Choose a CSV file first.", "error");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("file", fileInput.files[0]);
+
+            try {
+                const response = await fetch(`${API_BASE}/data-sources/csv/upload`, {
+                    method: "POST",
+                    body: formData,
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || "Unable to connect to the CSV file.");
+                showSuccess(data, "CSV");
+            } catch (error) {
+                setQuestionEnabled(false);
+                setNotice(error.message, "error");
+            }
+        }
+
+        async function connectMysql() {
+            const payload = {
+                host: document.getElementById("mysqlHost").value.trim(),
+                port: Number(document.getElementById("mysqlPort").value || 3306),
+                database: document.getElementById("mysqlDatabase").value.trim(),
+                username: document.getElementById("mysqlUsername").value.trim(),
+                password: document.getElementById("mysqlPassword").value,
+            };
+
+            try {
+                const response = await fetch(`${API_BASE}/data-sources/mysql/connect`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || "Unable to connect to MySQL.");
+                showSuccess(data, "MySQL");
+            } catch (error) {
+                setQuestionEnabled(false);
+                setNotice(error.message, "error");
+            }
+        }
+
+        async function askQuestion() {
+            const question = document.getElementById("question").value.trim();
+            if (!question) {
+                setNotice("Type a question before clicking Ask.", "error");
+                return;
+            }
+            if (!activeSourceId) {
+                setNotice("Please upload/connect a data source first.", "error");
+                return;
+            }
+
+            document.getElementById("backendStatus").textContent = "Backend: querying";
+            document.getElementById("errorOutput").textContent = "No errors.";
+            document.getElementById("errorOutput").classList.add("empty");
+
+            try {
+                const response = await fetch(`${API_BASE}/ask`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ question, source_id: activeSourceId }),
+                });
+                const data = await response.json();
+                document.getElementById("backendStatus").textContent = "Backend: ready";
+                document.getElementById("sqlOutput").textContent = data.sql || "No SQL returned.";
+                document.getElementById("sqlOutput").classList.remove("empty");
+
+                if (data.error) {
+                    document.getElementById("errorOutput").textContent = data.error;
+                    document.getElementById("errorOutput").classList.remove("empty");
+                    document.getElementById("resultOutput").innerHTML = '<div class="empty">No result because the query did not execute successfully.</div>';
+                } else {
+                    document.getElementById("errorOutput").textContent = "No errors.";
+                    document.getElementById("errorOutput").classList.add("empty");
+                    renderResult(data.result || []);
+                }
+            } catch (error) {
+                document.getElementById("backendStatus").textContent = "Backend: ready";
+                document.getElementById("errorOutput").textContent = error.message;
+                document.getElementById("errorOutput").classList.remove("empty");
+            }
+        }
+
+        selectSource("sqlite");
+        clearOutput();
+    </script>
+</body>
+</html>
