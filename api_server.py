@@ -61,7 +61,7 @@ logger = logging.getLogger("ai_analytics.api")
 
 
 @dataclass
-class RegisteredSource:
+class RegisteredSource: #represents one connected data source in your application such as sql or csv.
     source_id: str
     source_type: str
     adapter: DatabaseAdapter
@@ -75,10 +75,10 @@ REGISTERED_SOURCES: dict[str, RegisteredSource] = {}
 def _schema_to_response(schema: DatabaseSchema) -> DatabaseSchemaResponse:
     return DatabaseSchemaResponse.model_validate(schema.to_dict())
 
-
+#Take a newly connected data source, give it a unique ID, create a RegisteredSource object, store it in the registry, and return it.
 def _register_source(source_type: str, adapter: DatabaseAdapter, schema: DatabaseSchema, display_name: str) -> RegisteredSource:
-    source_id = uuid.uuid4().hex
-    registered = RegisteredSource(
+    source_id = uuid.uuid4().hex   #uuid.uuid4() generates a random UUID, and .hex converts it into a hexadecimal string.
+    registered = RegisteredSource(   #creating object
         source_id=source_id,
         source_type=source_type,
         adapter=adapter,
@@ -88,13 +88,13 @@ def _register_source(source_type: str, adapter: DatabaseAdapter, schema: Databas
     REGISTERED_SOURCES[source_id] = registered
     return registered
 
-
+#Given a source_id, find and return the corresponding RegisteredSource from the registry.
 def _get_registered_source(source_id: str | None) -> RegisteredSource | None:
     if not source_id:
         return None
     return REGISTERED_SOURCES.get(source_id)
 
-
+#Remove a data source from the registry and close its adapter/connection to release resources.
 def _close_registered_source(source_id: str) -> None:
     registered = REGISTERED_SOURCES.pop(source_id, None)
     if not registered:
@@ -104,12 +104,12 @@ def _close_registered_source(source_id: str) -> None:
     except Exception:
         logger.warning("Failed to close data source %s", source_id, exc_info=True)
 
-
+#Close and remove every currently registered data source.
 def _close_all_registered_sources() -> None:
     for source_id in list(REGISTERED_SOURCES):
         _close_registered_source(source_id)
 
-
+#To convert technical MySQL exceptions into meaningful messages that can be returned to the user.
 def _mysql_error_message(exc: Exception) -> str:
     message = str(exc)
     lowered = message.lower()
@@ -125,7 +125,7 @@ def _mysql_error_message(exc: Exception) -> str:
         return "MySQL connection failed: the server closed the connection unexpectedly."
     return f"MySQL connection failed: {message}"
 
-
+#This function creates the structured response that the API sends back after a data source is connected.
 def _build_data_source_response(registered: RegisteredSource, message: str) -> DataSourceResponse:
     return DataSourceResponse(
         source_id=registered.source_id,
@@ -134,7 +134,7 @@ def _build_data_source_response(registered: RegisteredSource, message: str) -> D
         database_schema=_schema_to_response(registered.schema),
     )
 
-
+#This function creates the default SQLite data source for the application.
 def _default_sqlite_source() -> RegisteredSource:
     adapter = SQLiteAdapter(DB_PATH, source_name=DB_PATH.name)
     schema = adapter.get_schema()
@@ -146,7 +146,7 @@ def _default_sqlite_source() -> RegisteredSource:
         display_name=DB_PATH.name,
     )
 
-
+#Checks that the file has a filename.Reads the uploaded file.Passes the file data to store_upload_bytes() for validation/storage.Converts storage/validation errors into a FastAPI HTTPException.
 async def _save_uploaded_file(upload_file: UploadFile, allowed_extensions: set[str], prefix: str) -> Path:
     if not upload_file.filename:
         raise HTTPException(status_code=400, detail="Uploaded file must have a filename.")
@@ -159,6 +159,7 @@ async def _save_uploaded_file(upload_file: UploadFile, allowed_extensions: set[s
 # ---------------------------------------------------------------------------
 # FastAPI app setup
 # ---------------------------------------------------------------------------
+#This creates the FastAPI application object.
 app = FastAPI(
     title="AI Analytics Query Assistant",
     description="Converts natural language questions into SQL, executes them against the selected data source, and returns structured results.",
@@ -166,6 +167,7 @@ app = FastAPI(
 )
 
 # Allow local frontends / tools to call the API during development
+#CORS (Cross-Origin Resource Sharing) for your API.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -173,7 +175,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+#When the application shuts down, close all registered data-source connections.
 @app.on_event("shutdown")
 def shutdown_cleanup() -> None:
     _close_all_registered_sources()
