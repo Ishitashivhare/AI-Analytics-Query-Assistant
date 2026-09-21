@@ -231,7 +231,7 @@ async def upload_csv_file(file: UploadFile = File(...)) -> DataSourceResponse:
         delete_path(upload_path)
         raise HTTPException(status_code=400, detail=f"Could not load the uploaded CSV file: {exc}") from exc
 
-
+#Unlike SQLite, there is no file upload here. The user provides MySQL connection details through MySQLConnectRequest
 @app.post("/data-sources/mysql/connect", response_model=DataSourceResponse, tags=["Data Source"])
 async def connect_mysql_database(request: MySQLConnectRequest) -> DataSourceResponse:
     """Connect to a MySQL database and introspect its schema."""
@@ -252,7 +252,7 @@ async def connect_mysql_database(request: MySQLConnectRequest) -> DataSourceResp
     except Exception as exc:
         raise HTTPException(status_code=400, detail=_mysql_error_message(exc)) from exc
 
-
+#The /ask endpoint takes a natural-language question, finds the selected data source, sends the question + schema to Llama through Ollama to generate SQL, validates and executes that SQL, and returns the results.
 @app.post("/ask", response_model=AskResponse, tags=["Query"])
 async def ask_question(request: AskRequest) -> AskResponse:
     """
@@ -288,7 +288,7 @@ async def ask_question(request: AskRequest) -> AskResponse:
             status_code=502,
             detail=f"LLM service returned an error: {exc.response.status_code}",
         ) from exc
-
+    #The LLM did not return any SQL for this question.
     if not sql:
         return AskResponse(
             question=question,
@@ -298,7 +298,7 @@ async def ask_question(request: AskRequest) -> AskResponse:
             result=None,
             error="The LLM did not return any SQL for this question.",
         )
-
+#if the question cannot be answered using the selected database.
     if "UNSUPPORTED_QUESTION" in sql.upper():
         return AskResponse(
             question=question,
